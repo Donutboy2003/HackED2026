@@ -1,0 +1,124 @@
+"""
+Piper TTS - Text to Speech Module (Low Latency)
+=================================================
+Uses Piper's Python API directly to keep the model loaded in memory,
+avoiding the lag caused by reloading the model on every speak() call.
+"""
+
+import queue
+import threading
+import wave
+import tempfile
+import os
+import platform
+import subprocess
+
+from piper.voice import PiperVoice
+
+# ── Configuration ──────────────────────────────────────────────────────────────
+
+MODEL_PATH = "/home/byteof87/dev/HackED2026/text_to_speech/en_US-lessac-medium.onnx"
+
+# ── Load model ONCE at startup ─────────────────────────────────────────────────
+
+print("[TTS] Loading voice model... ", end="", flush=True)
+_voice = PiperVoice.load(MODEL_PATH)
+print("done.")
+
+# ── Core TTS Function ──────────────────────────────────────────────────────────
+
+def speak(text: str) -> None:
+    """
+    Convert text to speech and play it.
+    Model is already loaded in memory — no reload lag.
+    """
+    if not text.strip():
+        return
+
+    try:
+        # Synthesize to a temp wav file
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            tmp_path = f.name
+            with wave.open(f, "wb") as wav_file:
+                _voice.synthesize(text, wav_file)
+
+        # Play the wav file
+        if platform.system() == "Darwin":
+            subprocess.run(["afplay", tmp_path], stderr=subprocess.DEVNULL)
+        else:
+            subprocess.run(["aplay", tmp_path], stderr=subprocess.DEVNULL)
+
+        os.remove(tmp_path)
+
+    except Exception as e:
+        print(f"[ERROR] TTS failed: {e}")
+
+
+# ── Queued / Non-blocking TTS ──────────────────────────────────────────────────
+
+class TTSQueue:
+    """
+    Non-blocking TTS queue — speak() runs in a background thread
+    so typing is never blocked while audio is playing.
+    """
+
+    def __init__(self):
+        self._queue = queue.Queue()
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
+
+    def say(self, text: str) -> None:
+        """Add text to the speech queue (non-blocking)."""
+        if text.strip():
+            self._queue.put(text)
+
+    def clear(self) -> None:
+        """Clear any pending phrases from the queue."""
+        while not self._queue.empty():
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                break
+
+    def _worker(self) -> None:
+        while True:
+            text = self._queue.get()
+            speak(text)
+            self._queue.task_done()
+
+
+# ── Interactive CLI ────────────────────────────────────────────────────────────
+
+def interactive_mode() -> None:
+    print("=" * 50)
+    print("  Piper TTS - Assistive Communication Tool")
+    print("=" * 50)
+    print("  Type your message and press Enter to speak.")
+    print("  Commands: :quit, :clear")
+    print("=" * 50)
+
+    tts = TTSQueue()
+
+    while True:
+        try:
+            user_input = input("\n> ").strip()
+
+            if not user_input:
+                continue
+            elif user_input.lower() == ":quit":
+                print("Goodbye!")
+                break
+            elif user_input.lower() == ":clear":
+                tts.clear()
+                print("[Queue cleared]")
+            else:
+                tts.say(user_input)
+                print(f"[Speaking] {user_input}")
+
+        except KeyboardInterrupt:
+            print("\nExiting.")
+            break
+
+
+if __name__ == "__main__":
+    interactive_mode()
