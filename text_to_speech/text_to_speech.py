@@ -3,7 +3,6 @@ Piper TTS - Text to Speech Module (Low Latency)
 =================================================
 Uses Piper's Python API directly to keep the model loaded in memory,
 avoiding the lag caused by reloading the model on every speak() call.
-Audio is synthesized to an in-memory buffer — no disk I/O.
 """
 
 import io
@@ -27,70 +26,49 @@ print("done.")
 
 # ── Core TTS Function ──────────────────────────────────────────────────────────
 
-# def speak(text: str) -> None:
-#     """
-#     Convert text to speech and play it.
-#     Model is loaded in memory and audio is buffered in memory — no disk I/O.
-#     """
-#     if not text.strip():
-#         return
-
-#     try:
-#         # Synthesize into an in-memory buffer (no temp file)
-#         buffer = io.BytesIO()
-#         with wave.open(buffer, "wb") as wav_file:
-#             wav_file.setnchannels(1)
-#             wav_file.setsampwidth(2)
-#             wav_file.setframerate(_voice.config.sample_rate)
-#             _voice.synthesize(text, wav_file)
-
-#         # Pipe buffer directly to audio player
-#         buffer.seek(0)
-#         if platform.system() == "Darwin":
-#             subprocess.run(["afplay", "-"], input=buffer.read(), stderr=subprocess.DEVNULL)
-#         else:
-#             subprocess.run(["aplay", "-"], input=buffer.read(), stderr=subprocess.DEVNULL)
-
-#     except Exception as e:
-#         print(f"[ERROR] TTS failed: {e}")
-
 def speak(text: str) -> None:
+    """
+    Convert text to speech and play it via Bluetooth speaker using PipeWire.
+    Model is loaded in memory and audio is buffered in memory — no disk I/O.
+    """
     if not text.strip():
         return
 
     try:
-        # Get raw PCM audio chunks directly
-        raw_audio = b"".join(_voice.synthesize_stream_raw(text))
+        # Generate raw PCM audio in memory
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(_voice.config.sample_rate)
+            _voice.synthesize(text, wav_file)
 
-        # Play raw PCM with explicit format flags
+        # Get raw PCM bytes (skip the 44-byte WAV header)
+        buffer.seek(44)
+        raw_audio = buffer.read()
+
         if platform.system() == "Darwin":
-            # Save to temp file for Mac (afplay needs a proper file)
+            # Mac: write full WAV to temp file and use afplay
             import tempfile, os
+            buffer.seek(0)
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                f.write(buffer.read())
                 tmp_path = f.name
-            buffer = io.BytesIO()
-            with wave.open(buffer, "wb") as wav_file:
-                wav_file.setnchannels(1)
-                wav_file.setsampwidth(2)
-                wav_file.setframerate(_voice.config.sample_rate)
-                wav_file.writeframes(raw_audio)
-            with open(tmp_path, "wb") as f:
-                f.write(buffer.getvalue())
             subprocess.run(["afplay", tmp_path])
             os.remove(tmp_path)
         else:
-            # Linux/Pi: pipe raw PCM directly to aplay
+            # Linux/Pi with PipeWire: use paplay for Bluetooth support
             subprocess.run([
-                "aplay",
-                "-r", str(_voice.config.sample_rate),
-                "-f", "S16_LE",
-                "-c", "1",
-                "-t", "raw",
-                "-"
+                "paplay",
+                "--raw",
+                "--rate", str(_voice.config.sample_rate),
+                "--format", "s16le",
+                "--channels", "1"
             ], input=raw_audio, stderr=subprocess.DEVNULL)
 
     except Exception as e:
         print(f"[ERROR] TTS failed: {e}")
+
 
 # ── Queued / Non-blocking TTS ──────────────────────────────────────────────────
 
