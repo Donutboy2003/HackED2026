@@ -2,10 +2,12 @@
 faster-whisper
 silero-vad
 webrtcvad-wheels
+RealtimeSTT
 
 # Audio
 pyaudio
 numpy
+scipy
 
 # ML (required by silero-vad)
 torch
