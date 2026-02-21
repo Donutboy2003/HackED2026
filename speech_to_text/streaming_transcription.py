@@ -14,6 +14,7 @@ def main():
         webrtc_sensitivity=3,      # 0-3, noise filtering
         on_realtime_transcription_update=process_text,  # called as you speak
         enable_realtime_transcription=True,
+        use_wake_words=False,
     )
 
     print("Listening... (Press Ctrl+C to stop)\n")
