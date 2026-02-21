@@ -3,13 +3,13 @@ Piper TTS - Text to Speech Module (Low Latency)
 =================================================
 Uses Piper's Python API directly to keep the model loaded in memory,
 avoiding the lag caused by reloading the model on every speak() call.
+Audio is synthesized to an in-memory buffer — no disk I/O.
 """
 
+import io
 import queue
 import threading
 import wave
-import tempfile
-import os
 import platform
 import subprocess
 
@@ -30,25 +30,26 @@ print("done.")
 def speak(text: str) -> None:
     """
     Convert text to speech and play it.
-    Model is already loaded in memory — no reload lag.
+    Model is loaded in memory and audio is buffered in memory — no disk I/O.
     """
     if not text.strip():
         return
 
     try:
-        # Synthesize to a temp wav file
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            tmp_path = f.name
-            with wave.open(f, "wb") as wav_file:
-                _voice.synthesize(text, wav_file)
+        # Synthesize into an in-memory buffer (no temp file)
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(_voice.config.sample_rate)
+            _voice.synthesize(text, wav_file)
 
-        # Play the wav file
+        # Pipe buffer directly to audio player
+        buffer.seek(0)
         if platform.system() == "Darwin":
-            subprocess.run(["afplay", tmp_path], stderr=subprocess.DEVNULL)
+            subprocess.run(["afplay", "-"], input=buffer.read(), stderr=subprocess.DEVNULL)
         else:
-            subprocess.run(["aplay", tmp_path], stderr=subprocess.DEVNULL)
-
-        os.remove(tmp_path)
+            subprocess.run(["aplay", "-"], input=buffer.read(), stderr=subprocess.DEVNULL)
 
     except Exception as e:
         print(f"[ERROR] TTS failed: {e}")
