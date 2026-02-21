@@ -52,6 +52,7 @@ def main():
         channels=1,
         rate=SAMPLE_RATE,
         input=True,
+        input_device_index=1,
         frames_per_buffer=CHUNK_SIZE
     )
 
