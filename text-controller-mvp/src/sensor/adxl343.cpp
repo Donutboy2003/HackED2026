@@ -1,76 +1,74 @@
 #include "adxl343.h"
-#include <math.h>
+#include "config.h"
 
-// Constructor: Configure the I2C instance
-Adxl343::Adxl343(i2c_inst_t *i2c, uint sda, uint scl) {
-    _i2c = i2c;
-    _sda = sda;
-    _scl = scl;
+#include <cstdio>
+#include <cmath>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <linux/i2c-dev.h>
+
+Adxl343::Adxl343(const char* i2c_device, int address)
+    : _device(i2c_device), _address(address), _fd(-1) {}
+
+Adxl343::~Adxl343() {
+    if (_fd >= 0) close(_fd);
 }
 
 bool Adxl343::init() {
-    // 1. Initialize I2C Hardware
-    i2c_init(_i2c, 400 * 1000);
-    gpio_set_function(_sda, GPIO_FUNC_I2C);
-    gpio_set_function(_scl, GPIO_FUNC_I2C);
-    
-    // Enable pull-ups on I2C pins (critical for stability)
-    gpio_pull_up(_sda);
-    gpio_pull_up(_scl);
-
-    sleep_ms(100); // Give sensor time to boot
-
-    // 2. Wake up the ADXL343 (It starts in Sleep Mode)
-    // Write 0x08 to Power Control Register (0x2D) to enable "Measurement Mode"
-    uint8_t power_ctl = 0x2D;
-    uint8_t measure_mode = 0x08;
-    
-    uint8_t buf[] = {power_ctl, measure_mode};
-    int ret = i2c_write_blocking(_i2c, ADXL343_ADDR, buf, 2, false);
-
-    if (ret < 0) {
-        printf("ADXL343 Init Failed! Check wiring.\n");
+    // Open the I2C bus
+    _fd = open(_device, O_RDWR);
+    if (_fd < 0) {
+        perror("Failed to open I2C device");
         return false;
     }
 
-    printf("ADXL343 Initialized.\n");
+    // Claim the slave address
+    if (ioctl(_fd, I2C_SLAVE, _address) < 0) {
+        perror("Failed to set I2C slave address");
+        return false;
+    }
+
+    usleep(100'000); // 100 ms boot time
+
+    // Wake up: set Measurement Mode in POWER_CTL (0x2D)
+    if (!writeRegister(REG_POWER_CTL, 0x08)) {
+        fprintf(stderr, "ADXL343 Init Failed — check wiring and I2C address.\n");
+        return false;
+    }
+
+    fprintf(stderr, "ADXL343 Initialized on %s @ 0x%02X\n", _device, _address);
     return true;
 }
 
 Vector3 Adxl343::readAccel() {
-    uint8_t reg = 0x32; // Start reading from DATAX0
-    uint8_t buffer[6];
+    uint8_t buf[6] = {};
+    readRegisters(REG_DATAX0, buf, 6);
 
-    // Read 6 bytes: X_L, X_H, Y_L, Y_H, Z_L, Z_H
-    i2c_write_blocking(_i2c, ADXL343_ADDR, &reg, 1, true); // True to keep master control
-    i2c_read_blocking(_i2c, ADXL343_ADDR, buffer, 6, false);
+    int16_t x = static_cast<int16_t>((buf[1] << 8) | buf[0]);
+    int16_t y = static_cast<int16_t>((buf[3] << 8) | buf[2]);
+    int16_t z = static_cast<int16_t>((buf[5] << 8) | buf[4]);
 
-    // Convert 2 bytes into a 16-bit integer (Little Endian)
-    int16_t x = (buffer[1] << 8) | buffer[0];
-    int16_t y = (buffer[3] << 8) | buffer[2];
-    int16_t z = (buffer[5] << 8) | buffer[4];
-
-    // Scale to G-Force (Default sensitivity is roughly 256 LSB/g)
-    // We keep it raw-ish but normalized for math
-    Vector3 v;
-    v.x = (float)x / 256.0f;
-    v.y = (float)y / 256.0f;
-    v.z = (float)z / 256.0f;
-
-    return v;
+    return { x / 256.0f, y / 256.0f, z / 256.0f };
 }
 
-// Calculate Roll (Tilt Left/Right)
-// Returns angle in Radians. 
-// +Roll = Tilted Right, -Roll = Tilted Left
 float Adxl343::getRoll(Vector3 a) {
-    return atan2(a.y, a.z);
+    return atan2f(a.y, a.z);
 }
 
-// Calculate Pitch (Nod Up/Down)
-// Returns angle in Radians.
-// +Pitch = Tilted Back, -Pitch = Tilted Forward (Nod)
 float Adxl343::getPitch(Vector3 a) {
-    // Note: We use sqrt(y*y + z*z) to stabilize pitch even if rolled
-    return atan2(-a.x, sqrt(a.y * a.y + a.z * a.z));
+    return atan2f(-a.x, sqrtf(a.y * a.y + a.z * a.z));
+}
+
+// ── Private helpers ────────────────────────────────────────────────────────
+
+bool Adxl343::writeRegister(uint8_t reg, uint8_t value) {
+    uint8_t buf[2] = { reg, value };
+    return write(_fd, buf, 2) == 2;
+}
+
+bool Adxl343::readRegisters(uint8_t reg, uint8_t* buf, int len) {
+    // Write register pointer, then read back `len` bytes
+    if (write(_fd, &reg, 1) != 1) return false;
+    return read(_fd, buf, len) == len;
 }

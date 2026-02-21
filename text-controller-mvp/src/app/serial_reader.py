@@ -1,38 +1,60 @@
-"""Reads filtered roll/pitch from the Pico over serial."""
+"""Reads roll,pitch lines from the local sensor binary via subprocess."""
 
-import serial
+import subprocess
+import threading
+from pathlib import Path
+
+SENSOR_BINARY = Path(__file__).parent / "sensor"
 
 
 class SerialReader:
-    def __init__(self, port: str, baud: int):
-        self.ser = None
-        self.port = port
-        self.baud = baud
-        self.last_error = None
+    def __init__(self, _port=None, _baud=None):
+        # _port and _baud are ignored — kept for API compatibility
+        self._proc   = None
+        self._latest = None
+        self._lock   = threading.Lock()
+        self._thread = None
+        self.last_error = ""
 
     def connect(self) -> bool:
+        if not SENSOR_BINARY.exists():
+            self.last_error = f"Sensor binary not found: {SENSOR_BINARY}"
+            return False
         try:
-            self.ser = serial.Serial(self.port, self.baud, timeout=0)
-            self.last_error = None
-            return True
-        except Exception as e:
+            self._proc = subprocess.Popen(
+                [str(SENSOR_BINARY)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,   # suppress calibration prints
+                text=True,
+                bufsize=1,                   # line-buffered
+            )
+        except OSError as e:
             self.last_error = str(e)
             return False
 
-    def read_latest(self) -> tuple[float, float] | None:
-        """Return the most recent (roll, pitch) or None."""
-        if not self.ser:
-            return None
-        try:
-            lines = self.ser.readlines()
-            if not lines:
-                return None
-            last_line = lines[-1].decode("utf-8", errors="ignore").strip()
-            if "," not in last_line:
-                return None
-            parts = last_line.split(",")
-            if len(parts) < 2:
-                return None
-            return float(parts[0]), float(parts[1])
-        except Exception:
-            return None
+        self._thread = threading.Thread(target=self._read_loop, daemon=True)
+        self._thread.start()
+        return True
+
+    def _read_loop(self):
+        for line in self._proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                roll, pitch = map(float, line.split(","))
+                with self._lock:
+                    self._latest = (roll, pitch)
+            except ValueError:
+                pass
+
+    def read_latest(self):
+        with self._lock:
+            val = self._latest
+            self._latest = None
+            return val
+
+    def close(self):
+        if self._proc:
+            self._proc.terminate()
+            self._proc.wait()

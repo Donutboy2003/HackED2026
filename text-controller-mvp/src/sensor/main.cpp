@@ -1,50 +1,44 @@
-#include <stdio.h>
-#include <math.h>
-#include "pico/stdlib.h"
-#include "hardware/i2c.h"
+#include <cstdio>
+#include <cmath>
+#include <unistd.h>     // usleep
 #include "config.h"
 #include "adxl343.h"
 
-// -- GLOBALS --
-float roll_offset = 0.0f;
-float pitch_offset = 0.0f;
-float filtered_roll = 0.0f;
-float filtered_pitch = 0.0f;
+static float roll_offset  = 0.0f;
+static float pitch_offset = 0.0f;
+static float filtered_roll  = 0.0f;
+static float filtered_pitch = 0.0f;
 
 int main() {
-    stdio_init_all();
-    sleep_ms(2000);
+    Adxl343 sensor(I2C_DEVICE, ADXL343_ADDR);
+    if (!sensor.init()) return 1;
 
-    Adxl343 sensor(I2C_PORT, I2C_SDA_PIN, I2C_SCL_PIN);
-    if (!sensor.init()) {
-        while (1) { tight_loop_contents(); }
-    }
-
-    // CALIBRATION
+    // --- Calibration: 50-sample average ---
     float sum_r = 0, sum_p = 0;
     for (int i = 0; i < 50; i++) {
         Vector3 v = sensor.readAccel();
         sum_r += sensor.getRoll(v);
         sum_p += sensor.getPitch(v);
-        sleep_ms(20);
+        usleep(20'000); // 20 ms
     }
-    roll_offset = sum_r / 50.0f;
+    roll_offset  = sum_r / 50.0f;
     pitch_offset = sum_p / 50.0f;
-    sleep_ms(1000);
+    usleep(1'000'000); // 1 s settle
 
-    // MAIN LOOP — just stream roll,pitch
+    // --- Main loop: stream roll,pitch to stdout ---
     while (true) {
         Vector3 v = sensor.readAccel();
         float raw_roll  = sensor.getRoll(v)  - roll_offset;
         float raw_pitch = sensor.getPitch(v) - pitch_offset;
 
-        filtered_roll  = (filtered_roll  * 0.8f) + (raw_roll  * 0.2f);
-        filtered_pitch = (filtered_pitch * 0.8f) + (raw_pitch * 0.2f);
+        filtered_roll  = filtered_roll  * 0.8f + raw_roll  * 0.2f;
+        filtered_pitch = filtered_pitch * 0.8f + raw_pitch * 0.2f;
 
-        // Protocol: roll,pitch
+        // Same wire protocol as the Pico version
         printf("%.4f,%.4f\n", filtered_roll, filtered_pitch);
+        fflush(stdout);     // essential — Python reads line-by-line
 
-        sleep_ms(16);
+        usleep(16'000); // ~60 Hz
     }
 
     return 0;
