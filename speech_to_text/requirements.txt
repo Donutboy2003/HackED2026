@@ -1,0 +1,15 @@
+# Speech to Text + VAD
+faster-whisper
+silero-vad
+webrtcvad-wheels
+
+# Audio
+pyaudio
+numpy
+
+# ML (required by silero-vad)
+torch
+torchaudio
+
+# Misc fixes
+setuptools
