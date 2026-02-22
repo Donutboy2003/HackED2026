@@ -12,6 +12,35 @@ SERIAL_PORT = "/dev/tty.usbmodem1102"
 BAUD_RATE = 115200
 LOOP_DELAY_S = 0.016   # ~60 fps
 
+CENTER_HOLD_SEC    = 3.0   # time for user to return to center
+CALIBRATION_SEC    = 2.0   # matches sensor binary calibration window
+
+
+def _run_calibration(driver: SSD1309Driver, oled: OLEDBuffer, reader: SerialReader):
+    """Block the main loop, show calibration UI, restart sensor."""
+
+    # Phase 1 — prompt user to center
+    deadline = time.time() + CENTER_HOLD_SEC
+    while time.time() < deadline:
+        remaining = (deadline - time.time()) / CENTER_HOLD_SEC
+        oled.clear()
+        oled.draw_calibration_scene(phase="center", countdown=remaining)
+        driver.show(oled)
+        time.sleep(0.05)
+
+    # Restart the subprocess — it will immediately begin its own calibration
+    reader.restart()
+
+    # Phase 2 — show calibration in progress
+    deadline = time.time() + CALIBRATION_SEC
+    while time.time() < deadline:
+        remaining = (deadline - time.time()) / CALIBRATION_SEC
+        oled.clear()
+        oled.draw_calibration_scene(phase="calibrating", countdown=remaining)
+        driver.show(oled)
+        time.sleep(0.05)
+
+
 
 def main():
     reader = SerialReader(SERIAL_PORT, BAUD_RATE)
@@ -30,6 +59,9 @@ def main():
     signal.signal(signal.SIGINT,  _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
+    # Initial calibration run on startup
+    _run_calibration(driver, oled, reader)
+
     if not reader.connect():
         print(f"Serial error: {reader.last_error}")
         driver.cleanup()
@@ -38,6 +70,12 @@ def main():
     print("Running — press Ctrl-C to stop.")
 
     while True:
+        # Handle restart request from app_state
+        if state.restart_requested:
+            state.restart_requested = False
+            _run_calibration(driver, oled, reader)
+            continue
+
         data = reader.read_latest()
         if data is not None:
             roll, pitch = data

@@ -352,6 +352,50 @@ class OLEDBuffer:
 
         self.draw_direction_pie(direction, dwell_percent)
 
+    def draw_calibration_scene(self, phase: str = "center", countdown: float = 0.0):
+        """
+        phase = "center"     → prompt user to return to neutral position
+        phase = "calibrating" → sensor is sampling
+        countdown            → seconds remaining (shown as progress bar)
+        """
+        cx = self.WIDTH  // 2
+        cy = self.HEIGHT // 2
+
+        self.line(0, 11, self.WIDTH, 11)
+
+        if phase == "center":
+            self.string("SENSOR RESTART", cx - 42, 2)
+            self.string("RETURN TO", cx - 27, 18)
+            self.string("CENTER", cx - 18, 28)
+
+            # Animated target crosshair
+            self.line(cx - 10, cy + 8, cx + 10, cy + 8)   # horizontal
+            self.line(cx,      cy + 3, cx,      cy + 13)   # vertical
+            self.rect(cx - 4,  cy + 4, 9, 9)               # center box
+
+        elif phase == "calibrating":
+            self.string("CALIBRATING", cx - 33, 2)
+            self.string("HOLD STILL", cx - 30, 18)
+
+            # Spinner-style dots
+            dot_count = 5
+            dot_spacing = 8
+            start_x = cx - (dot_count * dot_spacing) // 2
+            filled = int(dot_count * (1.0 - countdown))
+            for i in range(dot_count):
+                dx = start_x + i * dot_spacing
+                if i < filled:
+                    self.rect(dx, cy + 8, 5, 5, fill=True)
+                else:
+                    self.rect(dx, cy + 8, 5, 5)
+
+        # Progress bar along bottom
+        if countdown > 0:
+            bar_w = int((self.WIDTH - 4) * (1.0 - countdown))
+            self.rect(2, self.HEIGHT - 6, self.WIDTH - 4, 4)
+            if bar_w > 0:
+                self.rect(2, self.HEIGHT - 6, bar_w, 4, fill=True, outline=False)
+
 
 
 # ======================================================================
