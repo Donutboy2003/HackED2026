@@ -234,7 +234,7 @@ class OLEDBuffer:
         # ── Diagonal shortcut overlay ─────────────────────────────────
         _SHORTCUTS = {
             DIR_NE: "$SUGG",
-            DIR_SE: "BKSP",
+            DIR_SE: "SEND",
             DIR_SW: "DEL WD",
             DIR_NW: "CAPTION",
         }
