@@ -296,7 +296,8 @@ class OLEDBuffer:
 
         self.draw_direction_pie(direction, dwell_percent)
 
-    def draw_caption_scene(self, *, transcript, scroll_offset, paused, direction=DIR_CENTER, dwell_percent=0.0):
+    def draw_caption_scene(self, *, transcript, scroll_offset, paused,
+                       direction=DIR_CENTER, dwell_percent=0.0):
         log.debug(
             "draw_caption_scene lines=%d scroll=%d paused=%s",
             len(transcript), scroll_offset, paused,
@@ -304,14 +305,22 @@ class OLEDBuffer:
 
         font = self._font("small")
         cw   = self._char_w(font)
-        cx = self.WIDTH // 2
+        cx   = self.WIDTH // 2
 
         self.string("PAUSED" if paused else "LIVE", 2, 1)
         self.string("C", self.WIDTH - cw - 2, 1)
         self.line(0, 11, self.WIDTH, 11)
 
-        if direction == DIR_NW:
-            label = "WRITE MODE"
+        # ── Diagonal shortcut overlays ────────────────────────────────────
+        _SHORTCUTS = {
+            DIR_NW: "WRITE MODE",
+            DIR_NE: "RESTART SENSOR",
+            DIR_SE: "RESUME" if paused else "PAUSE",
+            DIR_SW: "CLEAR",
+        }
+
+        if direction in _SHORTCUTS:
+            label = _SHORTCUTS[direction]
             lw    = int(font.getlength(label))
             bar_w = lw + 12
             bar_h = 13
@@ -321,8 +330,9 @@ class OLEDBuffer:
             self.rect_loader(bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4, dwell_percent)
             self.string(label, bar_x + 6, bar_y + 3)
             self.draw_direction_pie(direction, dwell_percent)
-            return                          # skip transcript while overlay is showing
+            return
 
+        # ── Transcript lines ──────────────────────────────────────────────
         max_lines = 5
         line_h    = 10
         start_y   = 13
@@ -341,6 +351,7 @@ class OLEDBuffer:
             self.string("^", self.WIDTH - cw - 2, start_y)
 
         self.draw_direction_pie(direction, dwell_percent)
+
 
 
 # ======================================================================

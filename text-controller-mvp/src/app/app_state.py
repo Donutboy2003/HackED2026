@@ -33,6 +33,9 @@ class AppState:
         self.captioner = Captioner()
         self.tts = TTSQueue()
 
+        # Callback set by main.py
+        self.on_restart_sensor = None
+
         # Write mode state
         self.sentence = ""
         self.prefix = ""
@@ -179,10 +182,8 @@ class AppState:
 
         elif self.mode == MODE_CAPTION:
             if d == DIR_NE:
-                word = self.captioner.get_last_word()
-                if word:
-                    self.prefix = word
-                    self.mode = MODE_WRITE
+                if self.on_restart_sensor:
+                    self.on_restart_sensor()
             elif d == DIR_SE:
                 self.captioner.toggle_pause()
             elif d == DIR_SW:

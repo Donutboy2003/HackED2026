@@ -16,6 +16,7 @@ LOOP_DELAY_S = 0.016   # ~60 fps
 def main():
     reader = SerialReader(SERIAL_PORT, BAUD_RATE)
     state = AppState()
+    state.on_restart_sensor = reader.restart
     oled = OLEDBuffer()
     driver = SSD1309Driver()
 

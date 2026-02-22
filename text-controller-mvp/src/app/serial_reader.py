@@ -16,6 +16,14 @@ class SerialReader:
         self._thread = None
         self.last_error = ""
 
+    def restart(self):
+        """Kill and respawn the sensor subprocess."""
+        if self._proc:
+            self._proc.terminate()
+            self._proc.wait()
+            self._proc = None
+        self.connect()
+
     def connect(self) -> bool:
         if not SENSOR_BINARY.exists():
             self.last_error = f"Sensor binary not found: {SENSOR_BINARY}"
