@@ -304,6 +304,7 @@ class OLEDBuffer:
 
         font = self._font("small")
         cw   = self._char_w(font)
+        cx = self.WIDTH // 2
 
         self.string("PAUSED" if paused else "LIVE", 2, 1)
         self.string("C", self.WIDTH - cw - 2, 1)
