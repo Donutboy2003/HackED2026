@@ -15,14 +15,14 @@ MODE_WRITE = "WRITE"
 MODE_CAPTION = "CAPTION"
 
 # Dwell thresholds
-DWELL_CENTER_SEC = 3.0
+DWELL_CENTER_SEC = 2.0
 DWELL_DIAGONAL_SEC = 2.0
 
 # Cardinal repeat rate
 SCROLL_COOLDOWN_SEC = 0.5
 
 # Grace period after returning to center (cancel gesture)
-CENTER_COOLDOWN_SEC = 1.0
+CENTER_COOLDOWN_SEC = 0.5
 
 
 class AppState:
@@ -173,7 +173,7 @@ class AppState:
             if d == DIR_NE:
                 self._accept_top_suggestion()
             elif d == DIR_SE:
-                self._backspace()
+                self._send_message()
             elif d == DIR_SW:
                 self._delete_word()
 
