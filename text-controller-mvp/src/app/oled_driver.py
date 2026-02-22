@@ -14,7 +14,7 @@ Directory layout expected:
 
 import os
 import sys
-import time
+import math
 import logging
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -147,6 +147,67 @@ class OLEDBuffer:
         font = self._font(font_size)
         self._draw.text((x, y), text, font=font, fill=_FG)
 
+    def draw_direction_pie(self, direction: str, dwell_percent: float = 0.0):
+        """
+        Draw a mini 8-wedge direction indicator in the bottom-right corner.
+        Active wedge fills with pixels. Dwell shown as shrinking center dot.
+        """
+        RADIUS = 14
+        cx = self.WIDTH  - RADIUS - 2   # 112
+        cy = self.HEIGHT - RADIUS - 2   # 48
+
+        _DIR_ANGLES = {
+            DIR_N:  90,  DIR_NE: 45,  DIR_E:  0,   DIR_SE: 315,
+            DIR_S:  270, DIR_SW: 225, DIR_W:  180,  DIR_NW: 135,
+        }
+
+        WEDGE_HALF = 22.5 - 2   # small gap between wedges
+        DEAD_R     = 4           # dead zone radius in px
+
+        # Draw all wedge outlines, fill the active one
+        for dir_name, center_deg in _DIR_ANGLES.items():
+            is_active = direction == dir_name
+            a0 = math.radians(center_deg - WEDGE_HALF)
+            a1 = math.radians(center_deg + WEDGE_HALF)
+
+            steps = 24
+            for step in range(steps + 1):
+                a = a0 + (a1 - a0) * step / steps
+
+                # Outer arc edge
+                ox = cx + int(RADIUS * math.cos(a))
+                oy = cy - int(RADIUS * math.sin(a))
+                self.pixel(ox, oy)
+
+                if is_active:
+                    # Fill from dead zone edge outward
+                    for r in range(DEAD_R, RADIUS):
+                        fx = cx + int(r * math.cos(a))
+                        fy = cy - int(r * math.sin(a))
+                        self.pixel(fx, fy)
+
+            # Wedge boundary spokes
+            for a in [a0, a1]:
+                for r in range(DEAD_R, RADIUS):
+                    sx = cx + int(r * math.cos(a))
+                    sy = cy - int(r * math.sin(a))
+                    self.pixel(sx, sy)
+
+        # Dead zone circle outline
+        steps = 32
+        for step in range(steps):
+            a = 2 * math.pi * step / steps
+            self.pixel(cx + int(DEAD_R * math.cos(a)),
+                    cy - int(DEAD_R * math.sin(a)))
+
+        # Dwell indicator — filled center dot that grows with dwell
+        if dwell_percent > 0 and direction != DIR_CENTER:
+            fill_r = max(1, int(DEAD_R * dwell_percent))
+            for dy in range(-fill_r, fill_r + 1):
+                for dx in range(-fill_r, fill_r + 1):
+                    if dx * dx + dy * dy <= fill_r * fill_r:
+                        self.pixel(cx + dx, cy + dy)
+
     # ── Scene renderers ───────────────────────────────────────────────
 
     def draw_write_scene(self, *, sentence, prefix, cursor_index, sugg_index,
@@ -233,7 +294,9 @@ class OLEDBuffer:
 
             self.string(word, sx, sy)
 
-    def draw_caption_scene(self, *, transcript, scroll_offset, paused):
+        self.draw_direction_pie(direction, dwell_percent)
+
+    def draw_caption_scene(self, *, transcript, scroll_offset, paused, direction=DIR_CENTER, dwell_percent=0.0):
         log.debug(
             "draw_caption_scene lines=%d scroll=%d paused=%s",
             len(transcript), scroll_offset, paused,
@@ -245,6 +308,19 @@ class OLEDBuffer:
         self.string("PAUSED" if paused else "LIVE", 2, 1)
         self.string("C", self.WIDTH - cw - 2, 1)
         self.line(0, 11, self.WIDTH, 11)
+
+        if direction == DIR_NW:
+            label = "WRITE MODE"
+            lw    = int(font.getlength(label))
+            bar_w = lw + 12
+            bar_h = 13
+            bar_x = cx - bar_w // 2
+            bar_y = 26
+            self.rect(bar_x, bar_y, bar_w, bar_h)
+            self.rect_loader(bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4, dwell_percent)
+            self.string(label, bar_x + 6, bar_y + 3)
+            self.draw_direction_pie(direction, dwell_percent)
+            return                          # skip transcript while overlay is showing
 
         max_lines = 5
         line_h    = 10
@@ -262,6 +338,8 @@ class OLEDBuffer:
 
         if scroll_offset > 0:
             self.string("^", self.WIDTH - cw - 2, start_y)
+
+        self.draw_direction_pie(direction, dwell_percent)
 
 
 # ======================================================================

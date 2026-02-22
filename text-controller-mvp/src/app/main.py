@@ -61,6 +61,8 @@ def main():
                     transcript=s.captioner.transcript,
                     scroll_offset=s.transcript_scroll,
                     paused=s.captioner.paused,
+                    direction=inp.direction,
+                    dwell_percent=s.dwell_percent,
                 )
 
             driver.show(oled)
