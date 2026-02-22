@@ -28,7 +28,7 @@ if _libdir not in sys.path:
 from waveshare_OLED import OLED_1in51
 
 from font import ALPHABET
-from input_processor import DIR_NE, DIR_NW, DIR_SE, DIR_SW, DIR_CENTER
+from input_processor import DIR_N, DIR_NE, DIR_E, DIR_SE, DIR_S, DIR_SW, DIR_W, DIR_NW, DIR_CENTER
 
 # logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger(__name__)
