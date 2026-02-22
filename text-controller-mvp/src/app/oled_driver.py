@@ -88,6 +88,23 @@ class OLEDBuffer:
         """Approximate fixed character advance width for a font."""
         bbox = font.getbbox("A")
         return (bbox[2] - bbox[0]) + 1
+    
+    def _wrap_text(self, text: str, font, max_width: int) -> list[str]:
+        """Word-wrap text to fit within max_width pixels."""
+        words = text.split()
+        lines = []
+        current = ""
+        for word in words:
+            test = word if current == "" else current + " " + word
+            if font.getlength(test) <= max_width:
+                current = test
+            else:
+                if current:
+                    lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+        return lines if lines else [text]
 
     @property
     def image(self) -> Image.Image:
@@ -336,16 +353,23 @@ class OLEDBuffer:
         max_lines = 5
         line_h    = 10
         start_y   = 13
-        total     = len(transcript)
+        max_width = self.WIDTH - 4
+
+        # Expand all transcript lines into wrapped lines
+        wrapped: list[str] = []
+        for raw_line in transcript:
+            wrapped.extend(self._wrap_text(raw_line, font, max_width))
+
+        # Scroll and slice
+        total     = len(wrapped)
         end_idx   = total - scroll_offset
         start_idx = max(0, end_idx - max_lines)
 
         for i, line_idx in enumerate(range(start_idx, max(end_idx, start_idx))):
             if line_idx < 0 or line_idx >= total:
                 continue
-            text = transcript[line_idx]
-            log.debug("draw_caption_scene: line %d → %r", line_idx, text)
-            self.string(text, 2, start_y + i * line_h)
+            log.debug("draw_caption_scene: line %d → %r", line_idx, wrapped[line_idx])
+            self.string(wrapped[line_idx], 2, start_y + i * line_h)
 
         if scroll_offset > 0:
             self.string("^", self.WIDTH - cw - 2, start_y)

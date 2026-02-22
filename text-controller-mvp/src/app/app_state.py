@@ -21,8 +21,8 @@ DWELL_DIAGONAL_SEC = 2.0
 # Cardinal repeat rate
 SCROLL_COOLDOWN_SEC = 0.5
 
-# Grace period after returning to center (cancel gesture)
-CENTER_COOLDOWN_SEC = 0.5
+CENTER_RETURN_COOLDOWN_SEC    = 1.0   # grace period when returning from off-center
+CENTER_REFIRE_COOLDOWN_SEC    = 0.3   # just enough to prevent double-fire after selection
 
 
 class AppState:
@@ -95,7 +95,7 @@ class AppState:
             self._was_off_center = True
         elif self._was_off_center:
             self._was_off_center = False
-            self._center_cooldown_until = now + CENTER_COOLDOWN_SEC
+            self._center_cooldown_until = now + CENTER_RETURN_COOLDOWN_SEC
             self.input.reset_dwell()
 
         # Reset diagonal lock when direction changes
@@ -129,7 +129,7 @@ class AppState:
         if self.mode == MODE_WRITE and self.dwell_percent >= 1.0:
             self._select_current()
             self.input.reset_dwell()
-            self._center_cooldown_until = now + CENTER_COOLDOWN_SEC
+            self._center_cooldown_until = now + CENTER_REFIRE_COOLDOWN_SEC
 
     def _handle_cardinal(self, d: str, now: float):
         if now - self._last_scroll_time < SCROLL_COOLDOWN_SEC:
