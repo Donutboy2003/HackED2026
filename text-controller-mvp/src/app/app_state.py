@@ -9,6 +9,7 @@ from input_processor import (
 from predictor import PredictiveText
 from captioner import Captioner
 from font import ALPHABET
+from tty import TTSQueue
 
 MODE_WRITE = "WRITE"
 MODE_CAPTION = "CAPTION"
@@ -30,6 +31,7 @@ class AppState:
         self.input = InputProcessor()
         self.predictor = PredictiveText()
         self.captioner = Captioner()
+        self.tts = TTSQueue()
 
         # Write mode state
         self.sentence = ""
@@ -203,6 +205,8 @@ class AppState:
             elif char == "]":
                 self.sentence = ""
                 self.prefix = ""
+            elif char == ".":  # TTS trigger
+                self._send_message()
             else:
                 self.prefix += char
         else:
@@ -235,6 +239,20 @@ class AppState:
                     self.sentence += " "
             else:
                 self.sentence = ""
+
+    def _send_message(self):
+        """Commit prefix, speak the full sentence, then clear."""
+        if self.prefix:
+            self.sentence += self.prefix + " "
+            self.prefix = ""
+        message = self.sentence.strip()
+        if not message:
+            return
+        log.info("Sending message: %r", message)
+        self.tts.speak(message)
+        self.sentence = ""
+        self.sugg_index = 0
+        self._flash(".")
 
     def _flash(self, direction: str):
         self.flash_direction = direction
