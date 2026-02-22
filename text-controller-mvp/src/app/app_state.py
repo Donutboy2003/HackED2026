@@ -9,7 +9,7 @@ from input_processor import (
 from predictor import PredictiveText
 from captioner import Captioner
 from font import ALPHABET
-from tty import TTSQueue
+from tts import TTSQueue
 
 MODE_WRITE = "WRITE"
 MODE_CAPTION = "CAPTION"
@@ -248,7 +248,6 @@ class AppState:
         message = self.sentence.strip()
         if not message:
             return
-        log.info("Sending message: %r", message)
         self.tts.speak(message)
         self.sentence = ""
         self.sugg_index = 0
