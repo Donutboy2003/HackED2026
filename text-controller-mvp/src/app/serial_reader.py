@@ -4,7 +4,7 @@ import subprocess
 import threading
 from pathlib import Path
 
-SENSOR_BINARY = Path(__file__).parent / "sensor"
+SENSOR_BINARY = Path(__file__).parent.parent / "sensor" / "sensor"
 
 
 class SerialReader:
