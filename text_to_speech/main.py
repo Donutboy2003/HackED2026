@@ -27,7 +27,7 @@ import threading
 #   en_US-lessac-medium    (natural, balanced)
 #   en_US-ryan-high        (high quality, slower)
 #   en_US-amy-medium       (clear, good for accessibility)
-MODEL_PATH = "en_US-lessac-medium.onnx"
+MODEL_PATH = "/home/byteof87/dev/HackED2026/text_to_speech/en_US-lessac-medium.onnx"
 
 # Piper executable path (if not in PATH, provide full path)
 PIPER_EXECUTABLE = "piper"

@@ -17,7 +17,7 @@ import sys
 import time
 import logging
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 # ── Waveshare library path ────────────────────────────────────────────────────
 _base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -30,6 +30,7 @@ from waveshare_OLED import OLED_1in51
 from font import ALPHABET
 from input_processor import DIR_NE, DIR_NW, DIR_SE, DIR_SW, DIR_CENTER
 
+# logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger(__name__)
 
 # ── Font sizes (px) ───────────────────────────────────────────────────────────
@@ -284,7 +285,8 @@ class SSD1309Driver:
     def show(self, oled: OLEDBuffer):
         """Flush an OLEDBuffer to the physical display."""
         log.debug("show: flushing framebuffer")
-        buf = self._disp.getbuffer(oled.image)
+        flipped = ImageOps.mirror(oled.image)
+        buf = self._disp.getbuffer(flipped)
         self._disp.ShowImage(buf)
 
     def clear(self):

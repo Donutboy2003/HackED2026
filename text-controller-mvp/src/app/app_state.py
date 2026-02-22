@@ -26,7 +26,7 @@ CENTER_COOLDOWN_SEC = 1.0
 
 class AppState:
     def __init__(self):
-        self.mode = MODE_WRITE
+        self.mode = MODE_CAPTION
         self.input = InputProcessor()
         self.predictor = PredictiveText()
         self.captioner = Captioner()
