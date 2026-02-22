@@ -1,64 +1,69 @@
 """
 Hardware driver for the Waveshare 1.51inch Transparent OLED (128x64).
-Controller: SSD1309 via 4-wire SPI on Raspberry Pi 5.
+Based on the working Waveshare OLED_1in51 library + PIL rendering.
 
-Wiring (default GPIO pins):
-  VCC  → 3.3V (Pin 1)
-  GND  → GND  (Pin 6)
-  DIN  → MOSI (GPIO 10, Pin 19)
-  CLK  → SCLK (GPIO 11, Pin 23)
-  CS   → CE0  (GPIO  8, Pin 24)
-  DC   → GPIO 24 (Pin 35)
-  RST  → GPIO 25 (Pin 37)
-
-Install dependencies:
-  pip install spidev lgpio
+Directory layout expected:
+  project/
+  ├── oled_driver.py       ← this file
+  ├── lib/
+  │   └── waveshare_OLED/
+  │       └── OLED_1in51.py
+  └── pic/
+      └── Font.ttc
 """
 
+import os
+import sys
 import time
-import lgpio
-import spidev
+import logging
 
-from font import FONT_5x7, ALPHABET
-from input_processor import (
-    DIR_CENTER, DIR_N, DIR_S, DIR_E, DIR_W,
-    DIR_NE, DIR_NW, DIR_SE, DIR_SW,
-)
+from PIL import Image, ImageDraw, ImageFont
 
-# ── GPIO pin numbers (BCM) ────────────────────────────────────────────────────
-PIN_DC  = 24
-PIN_RST = 25
-PIN_CS  = 8
+# ── Waveshare library path ────────────────────────────────────────────────────
+_base_dir = os.path.dirname(os.path.abspath(__file__))
+_libdir   = os.path.join(_base_dir, "lib")
+if _libdir not in sys.path:
+    sys.path.append(_libdir)
 
-GPIO_CHIP = 4   # RPi5 uses gpiochip4; use 0 for RPi4 and earlier
+from waveshare_OLED import OLED_1in51
 
-# ── SPI settings ──────────────────────────────────────────────────────────────
-SPI_BUS          = 0
-SPI_DEV          = 0
-SPI_MAX_SPEED_HZ = 8_000_000
+from font import ALPHABET
+from input_processor import DIR_NE, DIR_NW, DIR_SE, DIR_SW, DIR_CENTER
 
-# ── SSD1309 command bytes ─────────────────────────────────────────────────────
-_CMD_DISPLAY_OFF      = 0xAE
-_CMD_DISPLAY_ON       = 0xAF
-_CMD_SET_CONTRAST     = 0x81
-_CMD_ENTIRE_ON        = 0xA4
-_CMD_NORMAL_DISPLAY   = 0xA6
-_CMD_SET_DISP_CLK_DIV = 0xD5
-_CMD_SET_MUX_RATIO    = 0xA8
-_CMD_SET_DISP_OFFSET  = 0xD3
-_CMD_SET_START_LINE   = 0x40
-_CMD_MEM_ADDR_MODE    = 0x20
-_CMD_SET_SEG_REMAP    = 0xA1
-_CMD_COM_SCAN_DEC     = 0xC8
-_CMD_SET_COM_PINS     = 0xDA
-_CMD_SET_PRECHARGE    = 0xD9
-_CMD_SET_VCOM_DESELECT = 0xDB
-_CMD_SET_COL_ADDR     = 0x21
-_CMD_SET_PAGE_ADDR    = 0x22
+log = logging.getLogger(__name__)
+
+# ── Font sizes (px) ───────────────────────────────────────────────────────────
+# Display is 128×64 — keep fonts tight.
+_FONT_PATH   = os.path.join(_base_dir, "pic", "Font.ttc")
+_SIZE_SMALL  = 8    # ~5×7 equivalent — fits 21 chars/row
+_SIZE_MEDIUM = 11
+_SIZE_LARGE  = 14
+
+# PIL "1" mode convention used by the Waveshare driver:
+#   255 = background (pixel off / transparent)
+#     0 = foreground (pixel on  / lit)
+_BG = 255
+_FG = 0
+
+
+def _load_fonts(path: str) -> dict:
+    try:
+        return {
+            "small":  ImageFont.truetype(path, _SIZE_SMALL),
+            "medium": ImageFont.truetype(path, _SIZE_MEDIUM),
+            "large":  ImageFont.truetype(path, _SIZE_LARGE),
+        }
+    except (IOError, OSError) as e:
+        log.warning("Could not load TTF font (%s) — falling back to PIL default", e)
+        default = ImageFont.load_default()
+        return {"small": default, "medium": default, "large": default}
+
+
+_FONTS = _load_fonts(_FONT_PATH)
 
 
 # ======================================================================
-# OLED Framebuffer
+# OLED Framebuffer — PIL-backed, same public API as before
 # ======================================================================
 
 class OLEDBuffer:
@@ -66,32 +71,52 @@ class OLEDBuffer:
     HEIGHT = 64
 
     def __init__(self):
-        self.buf = self._blank()
+        log.debug("OLEDBuffer init (%d×%d)", self.WIDTH, self.HEIGHT)
+        self._image: Image.Image = self._blank_image()
+        self._draw:  ImageDraw.ImageDraw = ImageDraw.Draw(self._image)
 
-    def _blank(self):
-        return [[0] * self.WIDTH for _ in range(self.HEIGHT)]
+    # ── Internal helpers ──────────────────────────────────────────────
+
+    def _blank_image(self) -> Image.Image:
+        return Image.new("1", (self.WIDTH, self.HEIGHT), _BG)
+
+    def _font(self, size: str = "small") -> ImageFont.FreeTypeFont:
+        return _FONTS.get(size, _FONTS["small"])
+
+    def _char_w(self, font) -> int:
+        """Approximate fixed character advance width for a font."""
+        bbox = font.getbbox("A")
+        return (bbox[2] - bbox[0]) + 1
+
+    @property
+    def image(self) -> Image.Image:
+        """The current PIL Image (read by SSD1309Driver.show)."""
+        return self._image
+
+    # ── Primitive drawing (PIL-backed) ────────────────────────────────
 
     def clear(self):
-        self.buf = self._blank()
+        self._image = self._blank_image()
+        self._draw  = ImageDraw.Draw(self._image)
+        log.debug("OLEDBuffer cleared")
 
     def pixel(self, x: int, y: int, c: int = 1):
         if 0 <= x < self.WIDTH and 0 <= y < self.HEIGHT:
-            self.buf[y][x] = c
+            self._draw.point((x, y), fill=_FG if c else _BG)
+
+    def line(self, x0, y0, x1, y1):
+        self._draw.line([(x0, y0), (x1, y1)], fill=_FG)
 
     def rect(self, x, y, w, h, *, fill=False, outline=True):
+        log.debug("rect x=%d y=%d w=%d h=%d fill=%s outline=%s", x, y, w, h, fill, outline)
+        x1, y1 = x + w - 1, y + h - 1
         if outline:
-            for i in range(x, x + w):
-                self.pixel(i, y)
-                self.pixel(i, y + h - 1)
-            for j in range(y, y + h):
-                self.pixel(x, j)
-                self.pixel(x + w - 1, j)
+            self._draw.rectangle([x, y, x1, y1], outline=_FG, fill=None)
         if fill:
-            for j in range(y, y + h):
-                for i in range(x, x + w):
-                    self.pixel(i, j)
+            self._draw.rectangle([x, y, x1, y1], fill=_FG)
 
     def rect_thick(self, x, y, w, h, thickness):
+        log.debug("rect_thick x=%d y=%d w=%d h=%d t=%d", x, y, w, h, thickness)
         for t in range(thickness):
             if w - 2 * t <= 0 or h - 2 * t <= 0:
                 break
@@ -99,136 +124,126 @@ class OLEDBuffer:
 
     def rect_dwell(self, x, y, w, h, dwell_percent, max_thickness=4):
         thickness = max(1, int(max_thickness * dwell_percent))
+        log.debug("rect_dwell dwell=%.2f → thickness=%d", dwell_percent, thickness)
         self.rect_thick(x, y, w, h, thickness)
 
     def rect_loader(self, x, y, w, h, percent):
+        log.debug("rect_loader x=%d y=%d w=%d h=%d pct=%.2f", x, y, w, h, percent)
         if percent <= 0:
             return
         perimeter = []
-        for i in range(x, x + w):
-            perimeter.append((i, y))
-        for j in range(y + 1, y + h):
-            perimeter.append((x + w - 1, j))
-        for i in range(x + w - 2, x - 1, -1):
-            perimeter.append((i, y + h - 1))
-        for j in range(y + h - 2, y, -1):
-            perimeter.append((x, j))
+        for i in range(x, x + w):           perimeter.append((i, y))
+        for j in range(y + 1, y + h):       perimeter.append((x + w - 1, j))
+        for i in range(x + w - 2, x - 1, -1): perimeter.append((i, y + h - 1))
+        for j in range(y + h - 2, y, -1):   perimeter.append((x, j))
         count = max(1, int(len(perimeter) * min(1.0, percent)))
-        for i in range(count):
-            px, py = perimeter[i]
+        log.debug("rect_loader: drawing %d / %d perimeter pixels", count, len(perimeter))
+        for px, py in perimeter[:count]:
             self.pixel(px, py)
 
-    def char(self, ch: str, x: int, y: int, *, invert=False):
-        bitmap = FONT_5x7.get(ch, FONT_5x7["?"])
-        for col_idx, byte in enumerate(bitmap):
-            for row_idx in range(8):
-                if (byte >> row_idx) & 1:
-                    self.pixel(x + col_idx, y + row_idx, 0 if invert else 1)
-
-    def string(self, text: str, x: int, y: int):
-        for ch in text:
-            self.char(ch, x, y)
-            x += 6
-
-    def to_ssd1309_bytes(self) -> bytes:
-        pages = 8
-        data  = bytearray(pages * self.WIDTH)
-        for page in range(pages):
-            base_row = page * 8
-            for col in range(self.WIDTH):
-                byte = 0
-                for bit in range(8):
-                    row = base_row + bit
-                    if row < self.HEIGHT and self.buf[row][col]:
-                        byte |= (1 << bit)
-                data[page * self.WIDTH + col] = byte
-        return bytes(data)
+    def string(self, text: str, x: int, y: int, font_size: str = "small"):
+        log.debug("string %r at (%d, %d) size=%s", text, x, y, font_size)
+        font = self._font(font_size)
+        self._draw.text((x, y), text, font=font, fill=_FG)
 
     # ── Scene renderers ───────────────────────────────────────────────
 
     def draw_write_scene(self, *, sentence, prefix, cursor_index, sugg_index,
                          suggestions, dwell_percent, direction):
-        cx, cy = 64, 19
+        log.debug(
+            "draw_write_scene cursor=%d sugg=%d prefix=%r dir=%s dwell=%.2f",
+            cursor_index, sugg_index, prefix, direction, dwell_percent,
+        )
 
-        # Status bar
+        font  = self._font("small")
+        cw    = self._char_w(font)   # ~char advance width in px
+        cx    = self.WIDTH  // 2
+        cy    = 18
+
+        # ── Status bar ────────────────────────────────────────────────
         full_text = sentence + prefix
-        visible   = full_text[-20:]
-        self.string(visible, 2, 2)
-        cursor_x = 2 + len(visible) * 6
-        for y in range(2, 10):
-            self.pixel(cursor_x, y)
-        self.rect(0, 10, 128, 1, fill=True)
+        visible   = full_text[-21:]          # fit within 128 px
+        self.string(visible, 2, 1)
+        cursor_x = 2 + len(visible) * cw
+        self.line(cursor_x, 1, cursor_x, 9)  # blinking cursor stub
+        self.line(0, 11, self.WIDTH, 11)      # separator
+        self.string("W", self.WIDTH - cw - 2, 1)
 
-        # Mode indicator
-        self.string("W", 120, 2)
-
-        # Diagonal shortcut overlay
-        _SHORTCUT_LABELS = {
+        # ── Diagonal shortcut overlay ─────────────────────────────────
+        _SHORTCUTS = {
             DIR_NE: "$SUGG",
-            DIR_SE: "BACKSPACE",
-            DIR_SW: "DEL WORD",
+            DIR_SE: "BKSP",
+            DIR_SW: "DEL WD",
             DIR_NW: "CAPTION",
         }
 
-        if direction in _SHORTCUT_LABELS:
-            label = _SHORTCUT_LABELS[direction].replace(
+        if direction in _SHORTCUTS:
+            label = _SHORTCUTS[direction].replace(
                 "$SUGG", suggestions[0] if suggestions else "…"
             )
-            label_w = len(label) * 6
-            bar_w   = label_w + 12
-            bar_h   = 13
-            bar_x   = cx - bar_w // 2
-            bar_y   = 25
+            log.debug("draw_write_scene: shortcut overlay %r dir=%s", label, direction)
+            lw     = int(font.getlength(label))
+            bar_w  = lw + 12
+            bar_h  = 13
+            bar_x  = cx - bar_w // 2
+            bar_y  = 26
             self.rect(bar_x, bar_y, bar_w, bar_h)
             self.rect_loader(bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4, dwell_percent)
             self.string(label, bar_x + 6, bar_y + 3)
             return
 
-        # Alphabet row
-        box_w, box_h = 9, 13
-        bx, by = cx - 4, cy - 3
+        # ── Alphabet row ──────────────────────────────────────────────
+        box_w, box_h = cw + 4, 13
+        bx = cx - box_w // 2
+        by = cy - 2
 
         if sugg_index == 0:
             self.rect(bx, by, box_w, box_h)
             self.rect_loader(bx - 2, by - 2, box_w + 4, box_h + 4, dwell_percent)
 
         visible_range = 8
-        spacing       = 8
+        spacing       = cw + 2
         for offset in range(-visible_range, visible_range + 1):
-            char_idx = (cursor_index + offset) % len(ALPHABET)
-            ch  = ALPHABET[char_idx]
-            x   = cx + (offset * spacing) - 2
-            y   = cy
-            if x < -5 or x > 130:
+            ch  = ALPHABET[(cursor_index + offset) % len(ALPHABET)]
+            x   = cx + offset * spacing - cw // 2
+            if x < -cw or x > self.WIDTH + cw:
                 continue
-            self.char(ch, x, y)
+            self.string(ch, x, cy)
 
-        # Suggestions list
-        list_y   = by + box_h + 4
-        line_h   = 10
-        max_vis  = min(3, len(suggestions))
+        # ── Suggestion list ───────────────────────────────────────────
+        list_y  = by + box_h + 3
+        line_h  = 10
+        max_vis = min(3, len(suggestions))
+        log.debug("draw_write_scene: %d suggestions", max_vis)
 
         for i in range(max_vis):
             word = suggestions[i]
+            lw   = int(font.getlength(word))
             sy   = list_y + i * line_h
-            sx   = cx - (len(word) * 3)
+            sx   = cx - lw // 2
             slot = i + 1
-            is_selected = sugg_index == slot
 
-            if is_selected:
-                sw = (len(word) * 6) + 3
-                sh = 11
-                self.rect(sx - 2, sy - 2, sw, sh)
-                self.rect_loader(sx - 4, sy - 4, sw + 4, sh + 4, dwell_percent)
+            if sugg_index == slot:
+                log.debug("draw_write_scene: suggestion slot %d selected (%r)", slot, word)
+                sw = lw + 4
+                sh = line_h + 1
+                self.rect(sx - 2, sy - 1, sw, sh)
+                self.rect_loader(sx - 4, sy - 3, sw + 4, sh + 4, dwell_percent)
 
             self.string(word, sx, sy)
 
     def draw_caption_scene(self, *, transcript, scroll_offset, paused):
-        self.string("C", 120, 2)
+        log.debug(
+            "draw_caption_scene lines=%d scroll=%d paused=%s",
+            len(transcript), scroll_offset, paused,
+        )
 
-        status = "PAUSED" if paused else "LIVE"
-        self.string(status, 2, 2)
-        self.rect(0, 10, 128, 1, fill=True)
+        font = self._font("small")
+        cw   = self._char_w(font)
+
+        self.string("PAUSED" if paused else "LIVE", 2, 1)
+        self.string("C", self.WIDTH - cw - 2, 1)
+        self.line(0, 11, self.WIDTH, 11)
 
         max_lines = 5
         line_h    = 10
@@ -240,101 +255,46 @@ class OLEDBuffer:
         for i, line_idx in enumerate(range(start_idx, max(end_idx, start_idx))):
             if line_idx < 0 or line_idx >= total:
                 continue
-            self.string(transcript[line_idx][:21], 2, start_y + i * line_h)
+            text = transcript[line_idx]
+            log.debug("draw_caption_scene: line %d → %r", line_idx, text)
+            self.string(text, 2, start_y + i * line_h)
 
         if scroll_offset > 0:
-            self.string("^", 122, 13)
+            self.string("^", self.WIDTH - cw - 2, start_y)
 
 
 # ======================================================================
-# SSD1309 Hardware Driver
+# SSD1309 Driver — thin wrapper around OLED_1in51
 # ======================================================================
 
 class SSD1309Driver:
-    def __init__(
-        self,
-        dc_pin:       int = PIN_DC,
-        rst_pin:      int = PIN_RST,
-        spi_bus:      int = SPI_BUS,
-        spi_dev:      int = SPI_DEV,
-        spi_speed_hz: int = SPI_MAX_SPEED_HZ,
-        contrast:     int = 0xCF,
-        gpio_chip:    int = GPIO_CHIP,
-    ):
-        self._dc  = dc_pin
-        self._rst = rst_pin
+    """
+    Drives the Waveshare 1.51" Transparent OLED via the official
+    Waveshare OLED_1in51 library. All low-level SPI/GPIO is handled
+    by that library — this class only manages init, show, and cleanup.
+    """
 
-        self._h = lgpio.gpiochip_open(gpio_chip)
-        lgpio.gpio_claim_output(self._h, self._dc)
-        lgpio.gpio_claim_output(self._h, self._rst)
-
-        self._spi = spidev.SpiDev()
-        self._spi.open(spi_bus, spi_dev)
-        self._spi.max_speed_hz = spi_speed_hz
-        self._spi.mode = 0b00
-
-        self._reset()
-        self._init_sequence(contrast)
-
-    # ── Low-level helpers ─────────────────────────────────────────────
-
-    def _cmd(self, *commands: int):
-        lgpio.gpio_write(self._h, self._dc, 0)
-        self._spi.writebytes(list(commands))
-
-    def _data(self, data: bytes):
-        lgpio.gpio_write(self._h, self._dc, 1)
-        chunk = 4096
-        for offset in range(0, len(data), chunk):
-            self._spi.writebytes(list(data[offset : offset + chunk]))
-
-    def _reset(self):
-        lgpio.gpio_write(self._h, self._rst, 1); time.sleep(0.01)
-        lgpio.gpio_write(self._h, self._rst, 0); time.sleep(0.01)
-        lgpio.gpio_write(self._h, self._rst, 1); time.sleep(0.01)
-
-    def _init_sequence(self, contrast: int):
-        init = [
-            (_CMD_DISPLAY_OFF,),
-            (_CMD_SET_DISP_CLK_DIV,   0x80),
-            (_CMD_SET_MUX_RATIO,      0x3F),
-            (_CMD_SET_DISP_OFFSET,    0x00),
-            (_CMD_SET_START_LINE | 0x00,),
-            (_CMD_MEM_ADDR_MODE,      0x00),   # horizontal addressing
-            (_CMD_SET_SEG_REMAP,),
-            (_CMD_COM_SCAN_DEC,),
-            (_CMD_SET_COM_PINS,       0x12),
-            (_CMD_SET_CONTRAST,       contrast),
-            (_CMD_SET_PRECHARGE,      0xF1),
-            (_CMD_SET_VCOM_DESELECT,  0x40),
-            (_CMD_ENTIRE_ON,),
-            (_CMD_NORMAL_DISPLAY,),
-        ]
-        for cmd_tuple in init:
-            self._cmd(*cmd_tuple)
-        self._cmd(_CMD_DISPLAY_ON)
-
-    # ── Public API ────────────────────────────────────────────────────
+    def __init__(self):
+        log.info("SSD1309Driver init via OLED_1in51")
+        self._disp = OLED_1in51.OLED_1in51()
+        self._disp.Init()
+        self._disp.clear()
+        log.info("SSD1309Driver ready — %dx%d", self._disp.width, self._disp.height)
 
     def show(self, oled: OLEDBuffer):
-        self._cmd(_CMD_SET_COL_ADDR,  0, OLEDBuffer.WIDTH  - 1)
-        self._cmd(_CMD_SET_PAGE_ADDR, 0, OLEDBuffer.HEIGHT // 8 - 1)
-        self._data(oled.to_ssd1309_bytes())
+        """Flush an OLEDBuffer to the physical display."""
+        log.debug("show: flushing framebuffer")
+        buf = self._disp.getbuffer(oled.image)
+        self._disp.ShowImage(buf)
 
     def clear(self):
-        self._cmd(_CMD_SET_COL_ADDR,  0, OLEDBuffer.WIDTH  - 1)
-        self._cmd(_CMD_SET_PAGE_ADDR, 0, OLEDBuffer.HEIGHT // 8 - 1)
-        self._data(bytes(OLEDBuffer.WIDTH * OLEDBuffer.HEIGHT // 8))
-
-    def set_contrast(self, value: int):
-        self._cmd(_CMD_SET_CONTRAST, value & 0xFF)
-
-    def display_on(self):  self._cmd(_CMD_DISPLAY_ON)
-    def display_off(self): self._cmd(_CMD_DISPLAY_OFF)
-    def invert(self, enabled: bool):
-        self._cmd(0xA7 if enabled else _CMD_NORMAL_DISPLAY)
+        """Blank the physical display."""
+        log.debug("clear: blanking display")
+        self._disp.clear()
 
     def cleanup(self):
-        self.display_off()
-        self._spi.close()
-        lgpio.gpiochip_close(self._h)
+        """Release hardware resources."""
+        log.info("SSD1309Driver cleanup")
+        self._disp.clear()
+        self._disp.module_exit()
+        log.info("Display shut down")
