@@ -54,7 +54,7 @@ class AppState:
         self._last_scroll_time = 0.0
 
         # Diagonal action lock
-        self._diagonal_fired = str | None = None
+        self._diagonal_fired: str | None = None
 
         # Feedback flash
         self.flash_direction: str | None = None
