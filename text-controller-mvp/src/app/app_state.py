@@ -51,7 +51,7 @@ class AppState:
         self._last_scroll_time = 0.0
 
         # Diagonal action lock
-        self._diagonal_fired = False
+        self._diagonal_fired = str | None = None
 
         # Feedback flash
         self.flash_direction: str | None = None
@@ -98,7 +98,7 @@ class AppState:
 
         # Reset diagonal lock when direction changes
         if d != self._diagonal_fired:
-            self._diagonal_fired = False
+            self._diagonal_fired = None
 
         # Update suggestions for write mode
         if self.mode == MODE_WRITE:
@@ -154,7 +154,7 @@ class AppState:
                 self.transcript_scroll = max(self.transcript_scroll - 1, 0)
 
     def _handle_diagonal(self, d: str):
-        if self._diagonal_fired:
+        if self._diagonal_fired is not None:
             return
         if self.dwell_percent < 1.0:
             return
