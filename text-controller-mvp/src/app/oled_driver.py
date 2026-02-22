@@ -25,7 +25,7 @@ _libdir   = os.path.join(_base_dir, "lib")
 if _libdir not in sys.path:
     sys.path.append(_libdir)
 
-from lib.waveshare_OLED import OLED_1in51
+from waveshare_OLED import OLED_1in51
 
 from font import ALPHABET
 from input_processor import DIR_NE, DIR_NW, DIR_SE, DIR_SW, DIR_CENTER
